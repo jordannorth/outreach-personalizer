@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import type { ChatMessage } from '../types';
-import { processAgentMessage } from '../services/agentService';
+import type { Session } from '../App';
+import { streamChat } from '../services/agentService';
 
 interface AgentState {
   isOpen: boolean;
@@ -16,7 +17,7 @@ interface AgentState {
 let counter = 0;
 const nextId = () => `msg-${Date.now()}-${++counter}`;
 
-export function useAgent(): AgentState {
+export function useAgent(session: Session): AgentState {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -36,33 +37,49 @@ export function useAgent(): AgentState {
         content: content.trim(),
         timestamp: new Date(),
       };
+
       setMessages((prev) => [...prev, userMsg]);
       setIsProcessing(true);
 
+      const assistantId = nextId();
+      setMessages((prev) => [
+        ...prev,
+        { id: assistantId, role: 'assistant', content: '', timestamp: new Date(), isStreaming: true },
+      ]);
+
       try {
-        const response = await processAgentMessage(content);
-        const assistantMsg: ChatMessage = {
-          id: nextId(),
-          role: 'assistant',
-          timestamp: new Date(),
-          ...response,
-        };
-        setMessages((prev) => [...prev, assistantMsg]);
+        // Build history for the API (user + previous assistant messages only)
+        const history = [...messages, userMsg].map((m) => ({
+          role: m.role,
+          content: m.content,
+        }));
+
+        for await (const event of streamChat(session, history)) {
+          if (event.type === 'text') {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId ? { ...m, content: m.content + event.delta } : m,
+              ),
+            );
+          }
+          // tool_call and done events are handled silently
+        }
       } catch {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: nextId(),
-            role: 'assistant',
-            content: 'Something went wrong. Please try again.',
-            timestamp: new Date(),
-          },
-        ]);
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId
+              ? { ...m, content: 'Something went wrong. Please try again.' }
+              : m,
+          ),
+        );
       } finally {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)),
+        );
         setIsProcessing(false);
       }
     },
-    [isProcessing],
+    [session, messages, isProcessing],
   );
 
   return { isOpen, messages, isProcessing, openAgent, closeAgent, toggleAgent, sendMessage, clearMessages };

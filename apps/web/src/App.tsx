@@ -12,10 +12,123 @@ import { useAgent } from '@/hooks/useAgent';
 import { currentUser } from '@/data/mockData';
 import { Users, GitBranch, Mail, TrendingUp, Plus, Inbox, Workflow } from 'lucide-react';
 
-export default function App() {
+export type Session = {
+  session_id: string;
+  name: string;
+  company_name: string;
+  company_email: string;
+};
+
+function OnboardingForm({ onComplete }: { onComplete: (session: Session) => void }) {
+  const [name, setName] = useState('');
+  const [companyEmail, setCompanyEmail] = useState('');
+  const [companyName, setCompanyName] = useState('');
+  const [cv, setCv] = useState<File | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cv) return;
+    setLoading(true);
+    setError('');
+
+    const formData = new FormData();
+    formData.append('name', name);
+    formData.append('company_email', companyEmail);
+    formData.append('company_name', companyName);
+    formData.append('cv', cv);
+
+    try {
+      const res = await fetch('/api/onboard', { method: 'POST', body: formData });
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      onComplete({ session_id: data.session_id, name, company_name: companyName, company_email: companyEmail });
+    } catch {
+      setError('Something went wrong. Please try again.');
+      setLoading(false);
+    }
+  };
+
+  const ready = name && companyEmail && companyName && cv;
+
+  return (
+    <div className="min-h-screen bg-background text-foreground flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <h1 className="text-2xl font-semibold mb-1">Lead Research Assistant</h1>
+        <p className="text-sm text-muted-foreground mb-8">
+          Upload your CV and we'll tailor research to your background.
+        </p>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-1">Your name</label>
+            <input
+              type="text"
+              required
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Jordan North"
+              className="w-full px-3 py-2 rounded-md border border-input bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Company email</label>
+            <input
+              type="email"
+              required
+              value={companyEmail}
+              onChange={(e) => setCompanyEmail(e.target.value)}
+              placeholder="jordan@acme.com"
+              className="w-full px-3 py-2 rounded-md border border-input bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Company name</label>
+            <input
+              type="text"
+              required
+              value={companyName}
+              onChange={(e) => setCompanyName(e.target.value)}
+              placeholder="Acme Corp"
+              className="w-full px-3 py-2 rounded-md border border-input bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Upload CV (PDF)</label>
+            <label className="flex items-center gap-2 w-full px-3 py-2 rounded-md border border-input bg-transparent text-sm cursor-pointer hover:bg-accent transition-colors">
+              <span className="text-muted-foreground">{cv ? cv.name : 'Choose file…'}</span>
+              <input
+                type="file"
+                accept=".pdf"
+                required
+                className="hidden"
+                onChange={(e) => setCv(e.target.files?.[0] ?? null)}
+              />
+            </label>
+          </div>
+
+          {error && <p className="text-sm text-destructive">{error}</p>}
+
+          <button
+            type="submit"
+            disabled={!ready || loading}
+            className="w-full py-2 px-4 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {loading ? 'Setting up…' : 'Get started'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function Dashboard({ session }: { session: Session }) {
   const { candidates, hiringFlows, activityItems, metrics, isLoading } = useDashboard();
-  const agent = useAgent();
+  const agent = useAgent(session);
   const [currentPage, setCurrentPage] = useState('dashboard');
+
+  const user = { ...currentUser, name: session.name, email: session.company_email };
 
   const metricCards = [
     { label: 'Total Candidates', value: metrics.totalCandidates, change: metrics.candidatesChange, icon: <Users size={14} /> },
@@ -31,25 +144,23 @@ export default function App() {
         onNavigate={setCurrentPage}
         onOpenAgent={agent.toggleAgent}
         isAgentOpen={agent.isOpen}
-        userName={currentUser.name}
+        userName={user.name}
         userRole={currentUser.role}
         userInitials={currentUser.initials}
       />
 
       <div className="flex flex-col flex-1 overflow-hidden min-w-0">
-        <Header user={currentUser} onOpenAgent={agent.toggleAgent} isAgentOpen={agent.isOpen} />
+        <Header user={user} onOpenAgent={agent.toggleAgent} isAgentOpen={agent.isOpen} />
 
         <main className="flex-1 overflow-y-auto">
           <div className="p-5 max-w-[1200px] mx-auto space-y-5">
 
-            {/* Metrics */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {metricCards.map((card) => (
                 <MetricCard key={card.label} {...card} isLoading={isLoading} />
               ))}
             </div>
 
-            {/* Hiring Flows + Activity */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <div className="lg:col-span-2 bg-card rounded-xl border border-border p-5">
                 <div className="flex items-center justify-between mb-4">
@@ -95,7 +206,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Candidates */}
             <div className="bg-card rounded-xl border border-border p-5">
               <div className="flex items-center justify-between mb-4">
                 <div>
@@ -118,7 +228,6 @@ export default function App() {
               )}
             </div>
 
-            {/* Personalization card */}
             <div className="bg-accent/20 rounded-xl border border-accent/40 p-5">
               <div className="flex items-start gap-4">
                 <div className="w-9 h-9 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
@@ -165,5 +274,10 @@ export default function App() {
         onClearMessages={agent.clearMessages}
       />
     </div>
-  )
+  );
+}
+
+export default function App() {
+  const [session, setSession] = useState<Session | null>(null);
+  return session ? <Dashboard session={session} /> : <OnboardingForm onComplete={setSession} />;
 }
